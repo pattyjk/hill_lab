@@ -80,7 +80,7 @@ write.table(seqtab.nochim, '~/Documents/GitHub/hill_lab/asv_table.txt', row.name
 
 #if you want to read in the ASV table again
 library(dada2)
-seqtab.nochim<-read.delim('~/Documents/GitHub/hill_lab/asv_table.txt', header=T, row.names=1)
+seqtab.nochim<-read.delim('~/Documents/GitHub/hill_lab/pat_analysis/asv_table.txt', header=T, row.names=1)
 
 #if want to use it in DADA2 need as a matrix, so
 seqtab.nochim<-as.matrix(seqtab.nochim)
@@ -91,10 +91,10 @@ taxa2<-as.data.frame(taxa)
 taxa2$asv<-row.names(taxa2)
 
 #save taxonomy so don't have to rerun
-write.table(taxa2, '~/Documents/GitHub/hill_lab/taxonomy.txt', sep='/t', quote=F, row.names=F)
+write.table(taxa2, '~/Documents/GitHub/hill_lab/pat_analysis/taxonomy.txt', sep='\t', quote=F, row.names=F)
 
 #read in taxonomy if necessary
-taxa2<-read.delim('~/Documents/GitHub/hill_lab/taxonomy.txt', header=T)
+taxa2<-read.delim('~/Documents/GitHub/hill_lab/pat_analysis/taxonomy.txt', header=T)
 
 #prune eukaryotes from the dataset
 which(taxa2$Kingdom =='Eukaryota')
@@ -116,38 +116,99 @@ dim(seqtab.noeuk)
 #[1] 22
 #math checks out!
 
+#write asv table to file for safe keeping
+write.table(seqtab.noeuk, '~/Documents/GitHub/hill_lab/pat_analysis/asv_table_no_euks.txt', quote=F, sep='\t', row.names = T)
+
+##Use the negative controls to 'decontaminate' the real samples
+#install new packages if needed, https://joey711.github.io/phyloseq/ & https://benjjneb.github.io/decontam/vignettes/decontam_intro.html
+library(phyloseq) 
+library(decontam)
+
+#read in metadata
+meta<-read.delim('~/Documents/GitHub/hill_lab/hill_lab_map', header=T)
+
+#if you need to re-read in ASV table
+seqtab.noeuk<-read.delim('~/Documents/GitHub/hill_lab/pat_analysis/asv_table_no_euks.txt', header=T, row.names=1)
+
+#transpose the dataframe to make things easier to work with
+seqtab.noeuk<-as.data.frame(t(seqtab.noeuk))
+
+# Keep only samples that exist in both files
+##not necessary here but in case you get a dataset that needs that (e.g. a sample didn't sequence)
+shared.samples <- intersect(colnames(seqtab.noeuk), meta$SampleID)
+seqtab.noeuk <- seqtab.noeuk[, shared.samples]
+meta <- meta[match(shared.samples, meta$SampleID), ]
+
+# Convert to phyloseq objects, makes things easier for decontam package
+OTU <- otu_table(as.matrix(seqtab.noeuk), taxa_are_rows = TRUE)
+SAM <- sample_data(meta)
+sample_names(SAM) <- meta$SampleID  # ensure they match
+sample_names(OTU) <- colnames(seqtab.noeuk)
+ps <- phyloseq(OTU, SAM)
+
+# Identify negative controls
+# Adjust this line if your controls are named differently, you can change 'NegativeControl' or add more thigns with a comma
+sample_data(ps)$is.neg <- sample_data(ps)$Type %in% c("NegativeControl")
+
+# Run decontam based on prevalance method
+#check the other methods in the help file, but the prevalance method is most commonly used
+contamdf.prev <- isContaminant(ps, method = "prevalence", neg = "is.neg")
+
+# Output contaminants
+contaminants <- as.data.frame(rownames(contamdf.prev[contamdf.prev$contaminant, ]))
+names(contaminants)<-'OTUS'
+write.table(contaminants, "~/Documents/GitHub/hill_lab/pat_analysis/contaminants.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+#how many? (n=14)
+dim(contaminants)
+#[1] 14  1
+
+#remove contaminants
+dim(seqtab.noeuk)
+#[1] 1094   48
+
+otu_no_contam<-seqtab.noeuk[-which(row.names(seqtab.noeuk) %in% contaminants$OTUS), ]
+dim(otu_no_contam)
+#[1] 1080   48
+
+#the dim isn't necessary, I'm jsut paranoid about not removing what I say I want removed
+
+#write to file
+write.table(otu_no_contam, '~/Documents/GitHub/hill_lab/pat_analysis/no_contam_asv_table.txt', row.names = T, sep='\t', quote=F)
+
+##Data analysis time, after all that processing stuffs
 #load the needed libraries
 library(vegan)
 library(ggplot2)
 
+#re-read in ASV table if needed (aka you start here instead of rerunning everything)
+otu_no_contam<-read.delim('~/Documents/GitHub/hill_lab/pat_analysis/no_contam_asv_table.txt', header=T, row.names = 1)
+
 #look at sequencing depth
-rowSums(seqtab.nochim)
-min(rowSums(seqtab.nochim))
-#[1] 11900
+colSums(otu_no_contam)
+min(colSums(otu_no_contam))
+#[1] 6018
 
-rowSums(seqtab.noeuk)
-min(rowSums(seqtab.noeuk))
-#[1] 11900 
-
-#only really lose stuff from high-abundance samples, so that's cool. 
 #plot rarefaction curve
-rarecurve(seqtab.nochim, step=25)
+rarecurve(seqtab.nochim, step=75)
 
 #rarefy table
-asv_rare<-rrarefy(seqtab.nochim, sample = 11900)
+asv_rare<-rrarefy(seqtab.nochim, sample = 6010)
 
 #calculate alpha diversity
 div_asv<-as.data.frame(specnumber(asv_rare))
 asv_shan<-as.data.frame(diversity(asv_rare, index = 'shannon'))
 
+#calculate beta diversity with bray-curtis similarity
 pcoa1<-capscale(asv_rare~1, distance = 'bray')
 
+#extract coordinates for plotting
 ko.scores<-scores(pcoa1)
 str(ko.scores)
-
 ko.scores2<-as.data.frame(ko.scores$sites)
 ko.scores2$SampleID<-row.names(ko.scores2)
 
+#plot it
 ggplot(ko.scores2, aes(MDS1, MDS2, label=SampleID))+
   geom_text()+
   theme_bw()
