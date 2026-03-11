@@ -3,7 +3,7 @@
 #install if necessary
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
-BiocManager::install("dada2", version = "3.20")
+BiocManager::install("dada2", version = "3.22")
 
 #load DADA2
 library(dada2)
